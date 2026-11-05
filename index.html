@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoice + Label</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<style>
+  :root { --ink:#1b1f1c; --muted:#5d665f; --line:#d5dad4; --bg:#f3f5f2; --card:#fff; --accent:#1f6f43; --accent-ink:#fff; --warn:#a3321f; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ink:#eef2ee; --muted:#9aa49c; --line:#2f3731; --bg:#121513; --card:#1b201c; --accent:#4fb37c; --accent-ink:#0c1a12; --warn:#ff8f7a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:17px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--ink); padding:20px 16px 48px; }
+  main { max-width:460px; margin:0 auto; }
+  h1 { font-size:26px; margin:8px 0 4px; }
+  p.sub { margin:0 0 20px; color:var(--muted); }
+  .pick { display:block; background:var(--card); border:2px dashed var(--line); border-radius:14px; padding:18px; margin-bottom:12px; cursor:pointer; }
+  .pick.done { border-style:solid; border-color:var(--accent); }
+  .pick b { display:block; font-size:19px; }
+  .pick span { color:var(--muted); font-size:15px; word-break:break-all; }
+  .pick input { display:none; }
+  button, a.btn { display:block; width:100%; min-height:56px; border:0; border-radius:14px; font:inherit; font-weight:600; font-size:18px; background:var(--accent); color:var(--accent-ink); margin-top:12px; text-align:center; text-decoration:none; padding:14px; }
+  button.alt, a.btn.alt { background:transparent; color:var(--ink); border:2px solid var(--line); }
+  button:disabled { opacity:.4; }
+  #msg { margin-top:14px; color:var(--warn); min-height:1.4em; }
+  #result { display:none; margin-top:8px; }
+  details { margin-top:26px; border-top:1px solid var(--line); padding-top:14px; }
+  summary { cursor:pointer; color:var(--muted); }
+  .row { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:14px; }
+  .row input { width:110px; font:inherit; padding:10px; border:2px solid var(--line); border-radius:10px; background:var(--card); color:var(--ink); }
+  .hint { color:var(--muted); font-size:14px; margin:4px 0 0; }
+  :focus-visible { outline:3px solid var(--accent); outline-offset:2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Invoice + label</h1>
+  <p class="sub">Pick both PDFs. You get one A4 page, ready to print.</p>
+
+  <label class="pick" id="pickInv"><b>1. Invoice PDF</b><span id="nameInv">Tap to choose</span>
+    <input type="file" id="fInv" accept="application/pdf,.pdf"></label>
+  <label class="pick" id="pickLbl"><b>2. Label PDF</b><span id="nameLbl">Tap to choose</span>
+    <input type="file" id="fLbl" accept="application/pdf,.pdf"></label>
+
+  <button id="make" disabled>Make the page</button>
+  <div id="msg" role="status"></div>
+
+  <div id="result">
+    <button id="share">Share or print</button>
+    <a class="btn alt" id="dl" download="invoice-and-label.pdf">Save to phone</a>
+    <button class="alt" id="again">Start again</button>
+  </div>
+
+  <details>
+    <summary>Adjust the label</summary>
+    <div class="row"><label for="size">Label size (%)</label><input id="size" type="number" inputmode="decimal" step="1"></div>
+    <p class="hint">100 is the old size. Default 115 is 15% bigger.</p>
+    <div class="row"><label for="dx">Move right (+) or left (−)</label><input id="dx" type="number" inputmode="decimal" step="5"></div>
+    <div class="row"><label for="dy">Move up (+) or down (−)</label><input id="dy" type="number" inputmode="decimal" step="5"></div>
+    <p class="hint">Small steps like 5 or 10 are enough. Press "Make the page" again after changing.</p>
+    <button class="alt" id="reset">Reset to default</button>
+  </details>
+</main>
+
+<script>
+const PAGE_W = 595.276, PAGE_H = 841.89;   // A4
+const BASE_SCALE = 0.66;                    // old label scale
+const DEFAULTS = { size:115, dx:0, dy:0 };
+const $ = id => document.getElementById(id);
+let invFile = null, lblFile = null, outBlob = null, outUrl = null;
+
+function loadSettings() {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem('labelSettings') || '{}'); } catch (e) {}
+  for (const k in DEFAULTS) $(k).value = (typeof s[k] === 'number') ? s[k] : DEFAULTS[k];
+}
+function saveSettings() {
+  const s = {}; for (const k in DEFAULTS) s[k] = parseFloat($(k).value) || 0;
+  try { localStorage.setItem('labelSettings', JSON.stringify(s)); } catch (e) {}
+  return s;
+}
+function refresh() { $('make').disabled = !(invFile && lblFile); }
+
+function pick(input, label, nameEl, which) {
+  input.addEventListener('change', () => {
+    const f = input.files[0];
+    if (!f) return;
+    if (which === 'inv') invFile = f; else lblFile = f;
+    nameEl.textContent = f.name; label.classList.add('done');
+    $('result').style.display = 'none'; $('msg').textContent = '';
+    refresh();
+  });
+}
+pick($('fInv'), $('pickInv'), $('nameInv'), 'inv');
+pick($('fLbl'), $('pickLbl'), $('nameLbl'), 'lbl');
+
+async function build() {
+  const { PDFDocument, degrees } = PDFLib;
+  const s = saveSettings();
+  const out = await PDFDocument.create();
+  const page = out.addPage([PAGE_W, PAGE_H]);
+
+  // Embed real PDF pages (not pictures), so text and barcodes stay sharp.
+  const [inv] = await out.embedPdf(await invFile.arrayBuffer(), [0]);
+  const [lbl] = await out.embedPdf(await lblFile.arrayBuffer(), [0]);
+
+  // Invoice: full page, nudged up 50 so the empty bottom area is free for the label.
+  page.drawPage(inv, { x: 0, y: 50 });
+
+  // Label: rotated 90 degrees. It grows from its old centre sideways, bottom edge stays put.
+  const scale = BASE_SCALE * (s.size / 100);
+  const oldW = lbl.height * BASE_SCALE, newW = lbl.height * scale;
+  const rightEdge = 420 - oldW / 2 + newW / 2 + s.dx;
+  page.drawPage(lbl, { x: rightEdge, y: 20 + s.dy, xScale: scale, yScale: scale, rotate: degrees(90) });
+
+  return await out.save();
+}
+
+$('make').addEventListener('click', async () => {
+  $('msg').textContent = ''; $('make').disabled = true; $('make').textContent = 'Working...';
+  try {
+    const bytes = await build();
+    outBlob = new Blob([bytes], { type: 'application/pdf' });
+    if (outUrl) URL.revokeObjectURL(outUrl);
+    outUrl = URL.createObjectURL(outBlob);
+    $('dl').href = outUrl;
+    $('result').style.display = 'block';
+  } catch (e) {
+    $('msg').textContent = 'Could not read one of the PDFs. Check you picked the right files. (' + e.message + ')';
+  }
+  $('make').textContent = 'Make the page'; refresh();
+});
+
+$('share').addEventListener('click', async () => {
+  const file = new File([outBlob], 'invoice-and-label.pdf', { type: 'application/pdf' });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) await navigator.share({ files: [file] });
+    else $('dl').click();
+  } catch (e) { /* user closed the share sheet */ }
+});
+
+$('again').addEventListener('click', () => {
+  invFile = lblFile = null; $('fInv').value = ''; $('fLbl').value = '';
+  $('nameInv').textContent = $('nameLbl').textContent = 'Tap to choose';
+  $('pickInv').classList.remove('done'); $('pickLbl').classList.remove('done');
+  $('result').style.display = 'none'; $('msg').textContent = ''; refresh();
+});
+
+$('reset').addEventListener('click', () => {
+  for (const k in DEFAULTS) $(k).value = DEFAULTS[k]; saveSettings();
+});
+
+loadSettings();
+</script>
+</body>
+</html>

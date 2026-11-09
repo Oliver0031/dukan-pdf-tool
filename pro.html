@@ -4,8 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Invoice + Label</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="theme-color" content="#1f6f43">
+<script src="pdf-lib_min.js"></script>
+<script src="pdf_min.js"></script>
 <style>
   :root { --ink:#1b1f1c; --muted:#5d665f; --line:#d5dad4; --bg:#f3f5f2; --card:#fff; --accent:#1f6f43; --accent-ink:#fff; --warn:#a3321f; }
   @media (prefers-color-scheme: dark) {
@@ -78,13 +82,13 @@
     <p class="hint">Small steps like 5 or 10 are enough. The preview updates by itself.</p>
     <button class="alt" id="reset">Reset to default</button>
   </details>
+  <p class="hint" id="off" style="margin-top:22px"></p>
 </main>
 
 <script>
 const PAGE_W = 595.276, PAGE_H = 841.89;   // A4
 const BASE_SCALE = 0.66;                    // old label scale
 const DEFAULTS = { size:115, dx:0, dy:0 };
-const WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 const $ = id => document.getElementById(id);
 let inv = null, lbl = null, outBlob = null, outUrl = null, timer = null, busy = false, again = false;
 
@@ -93,11 +97,8 @@ function setMsg(t) { $('msg').textContent = t || ''; }
 if (!window.PDFLib || !window.pdfjsLib) {
   setMsg('Could not load the PDF tools. Check your internet and reload the page.');
 } else {
-  // Run the PDF reader in a worker. The tiny wrapper lets it load from another site.
-  try {
-    const wb = new Blob(['importScripts("' + WORKER_URL + '");'], { type: 'text/javascript' });
-    pdfjsLib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(wb);
-  } catch (e) {}
+  // The PDF reader runs in a worker, loaded from the same folder as this page.
+  pdfjsLib.GlobalWorkerOptions.workerSrc = new URL('pdf_worker_min.js', location.href).href;
 }
 
 function loadSettings() {
@@ -168,7 +169,7 @@ async function handleFiles(files) {
         const n = productName(lines);
         if (n) { $('pname').value = n; syncName(); }
       } else bad.push(f.name);
-    } catch (e) { bad.push(f.name); }
+    } catch (e) { console.error(e); bad.push(f.name); }
   }
   if (bad.length) setMsg('I could not tell what this file is: ' + bad.join(', ') + '. It should be an invoice or a label PDF.');
   showStatus();
@@ -265,6 +266,12 @@ $('reset').addEventListener('click', () => {
 
 loadSettings();
 showStatus();
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').then(() => navigator.serviceWorker.ready).then(() => {
+    $('off').textContent = 'Saved on this phone. It also opens without internet.';
+  }).catch(() => {});
+}
 </script>
 </body>
 </html>
